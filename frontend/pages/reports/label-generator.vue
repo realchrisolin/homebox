@@ -8,6 +8,8 @@
   import { Label } from "@/components/ui/label";
   import { Input } from "@/components/ui/input";
   import { Checkbox } from "@/components/ui/checkbox";
+  import jsPDF from "jspdf";
+  import QRCode from "qrcode";
 
   const { t } = useI18n();
 
@@ -188,8 +190,8 @@
 
     const cols = Math.floor(availablePageWidth / cardWidth);
     const rows = Math.floor(availablePageHeight / cardHeight);
-    const gapX = (availablePageWidth - cols * cardWidth) / (cols - 1);
-    const gapY = (page.height - rows * cardHeight) / (rows - 1);
+    const gapX = cols > 1 ? (availablePageWidth - cols * cardWidth) / (cols - 1) : 0;
+    const gapY = rows > 1 ? (availablePageHeight - rows * cardHeight) / (rows - 1) : 0;
 
     return {
       measure,
@@ -595,13 +597,208 @@
     pages.value = calc;
   }
 
-/*
+  // PDF Preview State
+  const pdfPreviewUrl = ref<string | null>(null);
+
+  // Generate PDF Preview Function
+  async function generatePDFPreview() {
+    try {
+      const pdfBlob = await generatePDFBlob();
+      if (pdfPreviewUrl.value) {
+        URL.revokeObjectURL(pdfPreviewUrl.value);
+      }
+      pdfPreviewUrl.value = URL.createObjectURL(pdfBlob);
+    } catch (error) {
+      console.error('Error generating PDF preview:', error);
+      toast.error(t("reports.label_generator.pdf_preview_error") || "Error generating PDF preview");
+    }
+  }
+
+  // Generate PDF Blob (shared function for preview and download)
+  async function generatePDFBlob(): Promise<Blob> {
+    // Ensure we have calculated pages
+    if (pages.value.length === 0) {
+      calcPages();
+    }
+
+    if (pages.value.length === 0 || items.value.length === 0) {
+      throw new Error("No items to generate labels for");
+    }
+
+    // Create PDF document
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: displayProperties.measure as 'in' | 'cm' | 'mm',
+      format: [displayProperties.pageWidth, displayProperties.pageHeight]
+    });
+
+    // Generate QR codes as data URLs for all items
+    const allItems = pages.value.flatMap(page => page.rows.flatMap(row => row.items));
+    
+    // Extract actual URLs from the API endpoints for QR code content
+    const qrCodeDataUrls = await Promise.all(
+      allItems.map(item => {
+        // Extract the actual URL from the API endpoint
+        // item.url is like "/api/v1/qrcode?data=http%3A//localhost%3A3100/a/001-001"
+        const urlParams = new URLSearchParams(item.url.split('?')[1]);
+        const actualUrl = decodeURIComponent(urlParams.get('data') || item.url);
+        
+        return QRCode.toDataURL(actualUrl, {
+          width: 200,
+          margin: 1,
+          color: {
+            dark: '#000000',
+            light: '#FFFFFF'
+          }
+        });
+      })
+    );
+
+    let qrCodeIndex = 0;
+
+    // Process each page
+    for (const [pageIndex, page] of pages.value.entries()) {
+      if (pageIndex > 0) {
+        doc.addPage();
+      }
+
+      // Process each row on the page
+      for (const [rowIndex, row] of page.rows.entries()) {
+        // Process each item in the row
+        for (const [itemIndex, item] of row.items.entries()) {
+          // Calculate position with proper spacing
+          const x = displayProperties.pageLeftPadding + itemIndex * (out.value.card.width + out.value.gapX);
+          const y = displayProperties.pageTopPadding + rowIndex * (out.value.card.height + out.value.gapY);
+
+          // Add border if enabled
+          if (bordered.value) {
+            doc.setDrawColor(0, 0, 0);
+            doc.setLineWidth(0.01);
+            doc.rect(x, y, out.value.card.width, out.value.card.height);
+          }
+
+          // Add QR code
+          if (labelFields.qrCode && qrCodeIndex < qrCodeDataUrls.length) {
+            const qrSize = out.value.card.height * 0.9;
+            const qrX = x + 0.05;
+            const qrY = y + (out.value.card.height - qrSize) / 2;
+            
+            doc.addImage(
+              qrCodeDataUrls[qrCodeIndex],
+              'PNG',
+              qrX,
+              qrY,
+              qrSize,
+              qrSize
+            );
+          }
+
+          // Calculate text area with center alignment
+          const textX = x + (labelFields.qrCode ? out.value.card.height * 0.9 + 0.1 : 0.05);
+          const maxTextWidth = out.value.card.width - (labelFields.qrCode ? out.value.card.height * 0.9 + 0.15 : 0.1);
+          
+          // Calculate total text height for vertical centering
+          let totalTextHeight = 0;
+          const lineHeight = 0.15; // Consistent line height
+          
+          // Pre-calculate text lines with proper font sizes
+          let nameLines: string[] = [];
+          let locationLines: string[] = [];
+          
+          if (labelFields.name) {
+            doc.setFontSize(9);
+            nameLines = doc.splitTextToSize(item.name, maxTextWidth);
+          }
+          if (labelFields.location) {
+            doc.setFontSize(9);
+            locationLines = doc.splitTextToSize(item.location, maxTextWidth);
+          }
+          
+          // Count lines for each field to calculate total height
+          if (labelFields.assetId) totalTextHeight += lineHeight;
+          if (labelFields.branding) totalTextHeight += lineHeight * 0.8;
+          if (labelFields.name) totalTextHeight += nameLines.length * lineHeight * 0.8;
+          if (labelFields.location) totalTextHeight += locationLines.length * lineHeight * 0.8;
+          
+          // Start Y position for vertical centering
+          let textY = y + (out.value.card.height - totalTextHeight) / 2 + lineHeight * 0.7;
+
+          // Add Asset ID (matches font-bold, default size ~16px -> 12pt in PDF)
+          if (labelFields.assetId) {
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(12);
+            const assetText = selectionMode.value === 'location' ? item.name : item.assetID;
+            doc.text(assetText, textX, textY, { maxWidth: maxTextWidth });
+            textY += lineHeight;
+          }
+
+          // Add HomeBox branding (matches text-xs font-light italic ~12px -> 9pt in PDF)
+          if (labelFields.branding) {
+            doc.setFont('helvetica', 'italic');
+            doc.setFontSize(9);
+            doc.setTextColor(128, 128, 128); // Light gray to match font-light
+            doc.text('HomeBox', textX, textY, { maxWidth: maxTextWidth });
+            doc.setTextColor(0, 0, 0); // Reset to black
+            textY += lineHeight * 0.8;
+          }
+
+          // Add item name (matches text-xs ~12px -> 9pt in PDF)
+          if (labelFields.name) {
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.text(nameLines, textX, textY);
+            textY += nameLines.length * lineHeight * 0.8;
+          }
+
+          // Add location (matches text-xs ~12px -> 9pt in PDF)
+          if (labelFields.location) {
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.text(locationLines, textX, textY);
+          }
+
+          qrCodeIndex++;
+        }
+      }
+    }
+
+    return new Blob([doc.output('arraybuffer')], { type: 'application/pdf' });
+  }
+
+  // PDF Generation Function (now uses shared blob function)
+  async function generateLabelsPDF() {
+    try {
+      const pdfBlob = await generatePDFBlob();
+      
+      // Create download link
+      const url = URL.createObjectURL(pdfBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `labels_${new Date().toISOString().split('T')[0]}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      toast.success(t("reports.label_generator.pdf_generated") || "PDF generated successfully!");
+
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      toast.error(t("reports.label_generator.pdf_generation_error") || "Error generating PDF. Please try again.");
+    }
+  }
+
   onMounted(() => {
     console.log('Component mounted, initial data:');
-    console.log('- allFields:', allAssets?.value);
+    console.log('- allAssets:', allAssets?.value);
     console.log('- locations:', allLocations?.value);
     console.log('- selectionMode:', selectionMode.value);
     calcPages();
+  });
+
+  // Clean up PDF preview URL when component is unmounted
+  onUnmounted(() => {
+    if (pdfPreviewUrl.value) {
+      URL.revokeObjectURL(pdfPreviewUrl.value);
+    }
   });
 
   // Watch for changes in selection mode and recalculate pages
@@ -610,6 +807,11 @@
     console.log('Watcher triggered - selectedAssets:', selectedAssets);
     console.log('Watcher triggered - selectedLocation:', selectedLocation);
     calcPages();
+    // Clear preview when settings change
+    if (pdfPreviewUrl.value) {
+      URL.revokeObjectURL(pdfPreviewUrl.value);
+      pdfPreviewUrl.value = null;
+    }
   }, { deep: true });
 
   // Watch for changes in items and recalculate pages
@@ -617,13 +819,28 @@
     console.log('Items changed, recalculating pages. New items count:', newItems.length);
     console.log('Items changed, new items:', newItems);
     calcPages();
+    // Clear preview when items change
+    if (pdfPreviewUrl.value) {
+      URL.revokeObjectURL(pdfPreviewUrl.value);
+      pdfPreviewUrl.value = null;
+    }
   });
+
+  // Watch for changes in display properties and label fields
+  watch([displayProperties, labelFields, bordered], () => {
+    console.log('Display properties or label fields changed');
+    calcPages();
+    // Clear preview when settings change
+    if (pdfPreviewUrl.value) {
+      URL.revokeObjectURL(pdfPreviewUrl.value);
+      pdfPreviewUrl.value = null;
+    }
+  }, { deep: true });
 
   // Watch selectedAssets specifically
   watch(selectedAssets, (newValue, oldValue) => {
     console.log('selectedAssets changed from:', oldValue, 'to:', newValue);
   }, { deep: true });
-*/
 </script>
 
 <template>
@@ -880,67 +1097,37 @@
 
       <div>
         <p>{{ $t("reports.label_generator.qr_code_example") }} {{ displayProperties.baseURL }}/a/{asset_id}</p>
-        <Button size="lg" class="my-4 w-full" @click="calcPages">
-          {{ $t("reports.label_generator.generate_page") }}
-        </Button>
+        <div class="flex flex-col gap-2 my-4">
+          <Button size="lg" class="w-full" @click="generatePDFPreview">
+            {{ $t("reports.label_generator.generate_preview") || "Generate Preview" }}
+          </Button>
+          <Button size="lg" class="w-full" variant="outline" @click="generateLabelsPDF">
+            {{ $t("reports.label_generator.download_pdf") || "Download PDF" }}
+          </Button>
+        </div>
       </div>
     </div>
   </div>
-  <div class="flex flex-col items-center">
-    <section
-      v-for="(page, pi) in pages"
-      :key="pi"
-      class="border-2 print:border-none"
-      :style="{
-        paddingTop: `${out.page.pt}${out.measure}`,
-        paddingBottom: `${out.page.pb}${out.measure}`,
-        paddingLeft: `${out.page.pl}${out.measure}`,
-        paddingRight: `${out.page.pr}${out.measure}`,
-        width: `${out.page.width}${out.measure}`,
-        background: `white`,
-        color: `black`,
-      }"
-    >
-      <div
-        v-for="(row, ri) in page.rows"
-        :key="ri"
-        class="flex break-inside-avoid"
-        :style="{
-          columnGap: `${out.gapX}${out.measure}`,
-          rowGap: `${out.gapY}${out.measure}`,
-        }"
-      >
-        <div
-          v-for="(item, idx) in row.items"
-          :key="idx"
-          class="flex border-2"
-          :class="{
-            'border-black': bordered,
-            'border-transparent': !bordered,
-          }"
-          :style="{
-            height: `${out.card.height}${out.measure}`,
-            width: `${out.card.width}${out.measure}`,
-          }"
-        >
-          <div v-if="labelFields.qrCode" class="flex items-center">
-            <img
-              :src="item.url"
-              :style="{
-                minWidth: `${out.card.height * 0.9}${out.measure}`,
-                width: `${out.card.height * 0.9}${out.measure}`,
-                height: `${out.card.height * 0.9}${out.measure}`,
-              }"
-            />
-          </div>
-          <div class="ml-2 flex flex-col justify-center">
-            <div v-if="labelFields.assetId" class="font-bold">{{ selectionMode === 'location' ? item.name : item.assetID }}</div>
-            <div v-if="labelFields.branding" class="text-xs font-light italic">HomeBox</div>
-            <div v-if="labelFields.name" class="overflow-hidden text-wrap text-xs">{{ item.name }}</div>
-            <div v-if="labelFields.location" class="text-xs">{{ item.location }}</div>
-          </div>
-        </div>
+  <!-- PDF Preview Section -->
+  <div class="flex flex-col items-center mt-8">
+    <div v-if="pdfPreviewUrl" class="w-full max-w-4xl">
+      <h3 class="text-lg font-medium mb-4 text-center">{{ $t("reports.label_generator.pdf_preview") || "PDF Preview" }}</h3>
+      <div class="border-2 border-gray-300 rounded-lg overflow-hidden">
+        <iframe
+          :src="pdfPreviewUrl"
+          class="w-full h-96 md:h-[600px]"
+          frameborder="0"
+          title="PDF Preview"
+        ></iframe>
       </div>
-    </section>
+      <p class="text-sm text-gray-600 mt-2 text-center">
+        {{ $t("reports.label_generator.pdf_preview_note") || "This preview shows exactly how your PDF will look when downloaded." }}
+      </p>
+    </div>
+    <div v-else class="w-full max-w-4xl text-center py-12">
+      <p class="text-gray-500">
+        {{ $t("reports.label_generator.no_preview") || "Click 'Generate Preview' to see your labels." }}
+      </p>
+    </div>
   </div>
 </template>
