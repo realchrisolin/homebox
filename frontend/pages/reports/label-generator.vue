@@ -40,6 +40,104 @@
     pageRightPadding: 0.1,
   });
 
+  // Label dimension presets
+  type LabelPreset = {
+    name: string;
+    measure: string;
+    cardHeight: number;
+    cardWidth: number;
+    pageHeight: number;
+    pageWidth: number;
+    pageTopPadding: number;
+    pageBottomPadding: number;
+    pageLeftPadding: number;
+    pageRightPadding: number;
+  };
+
+  const labelPresets = ref<LabelPreset[]>([
+    {
+      name: "Dymo 30252 (1-1/8\" x 3-1/2\")",
+      measure: "in",
+      cardHeight: 1.125,
+      cardWidth: 3.5,
+      pageHeight: 11,
+      pageWidth: 8.5,
+      pageTopPadding: 0.5,
+      pageBottomPadding: 0.5,
+      pageLeftPadding: 0.25,
+      pageRightPadding: 0.25,
+    },
+    {
+      name: "Avery 5160 (1\" x 2-5/8\")",
+      measure: "in",
+      cardHeight: 1,
+      cardWidth: 2.63,
+      pageHeight: 11,
+      pageWidth: 8.5,
+      pageTopPadding: 0.5,
+      pageBottomPadding: 0.5,
+      pageLeftPadding: 0.19,
+      pageRightPadding: 0.19,
+    },
+    {
+      name: "Avery 5163 (2\" x 4\")",
+      measure: "in",
+      cardHeight: 2,
+      cardWidth: 4,
+      pageHeight: 11,
+      pageWidth: 8.5,
+      pageTopPadding: 0.5,
+      pageBottomPadding: 0.5,
+      pageLeftPadding: 0.25,
+      pageRightPadding: 0.25,
+    },
+    {
+      name: "Brother DK-2205 (2.4\" Continuous)",
+      measure: "in",
+      cardHeight: 2.4,
+      cardWidth: 3.5,
+      pageHeight: 11,
+      pageWidth: 8.5,
+      pageTopPadding: 0.5,
+      pageBottomPadding: 0.5,
+      pageLeftPadding: 0.25,
+      pageRightPadding: 0.25,
+    },
+  ]);
+
+  // Function to apply a preset
+  function applyPreset(presetIndex: number) {
+    if (presetIndex >= 0 && presetIndex < labelPresets.value.length) {
+      const preset = labelPresets.value[presetIndex];
+      displayProperties.measure = preset.measure;
+      displayProperties.cardHeight = preset.cardHeight;
+      displayProperties.cardWidth = preset.cardWidth;
+      displayProperties.pageHeight = preset.pageHeight;
+      displayProperties.pageWidth = preset.pageWidth;
+      displayProperties.pageTopPadding = preset.pageTopPadding;
+      displayProperties.pageBottomPadding = preset.pageBottomPadding;
+      displayProperties.pageLeftPadding = preset.pageLeftPadding;
+      displayProperties.pageRightPadding = preset.pageRightPadding;
+      
+      // Recalculate pages with new dimensions
+      calcPages();
+    }
+  }
+
+  // Selection mode and related state
+  const selectionMode = ref<'range' | 'assets' | 'location'>('range');
+  const selectedAssets = reactive<Record<string, boolean>>({});
+  const selectedLocation = ref<string | null>(null);
+
+  // Customizable label fields
+  const labelFields = reactive({
+    assetId: true,
+    name: true,
+    location: true,
+    branding: true, // The "HomeBox" text
+    qrCode: true,
+  });
+
   type LabelOptionInput = {
     measure: string;
     page: {
@@ -175,12 +273,20 @@
     ];
   });
 
-  type LabelData = {
+  type AssetData = {
     url: string;
     name: string;
     assetID: string;
     location: string;
   };
+
+  type LocationData = {
+    url: string;
+    name: string;
+    locationID: string;
+    location: string;
+  };
+
 
   function fmtAssetID(aid: number | string) {
     aid = aid.toString();
@@ -190,7 +296,19 @@
     return aidStr;
   }
 
-  function getQRCodeUrl(assetID: string): string {
+  function fmtLocationID(lid: number | string) {
+    const lidStr = lid.toString();
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    
+    if (uuidRegex.test(lidStr)) {
+      return lidStr;
+    }
+    
+    return lidStr;
+  }
+
+  function getAssetQRCodeUrl(assetID: string): string {
     let origin = displayProperties.baseURL.trim();
 
     // remove trailing slash
@@ -203,55 +321,204 @@
     return route(`/qrcode`, { data: encodeURIComponent(data) });
   }
 
-  function getItem(n: number, item: { assetId: string; name: string; location: { name: string } } | null): LabelData {
+  function getLocationQRCodeUrl(locationID: string): string {
+    let origin = displayProperties.baseURL.trim();
+
+    // remove trailing slash
+    if (origin.endsWith("/")) {
+      origin = origin.slice(0, -1);
+    }
+
+    const data = `${origin}/location/${locationID}`;
+
+    return route(`/qrcode`, { data: encodeURIComponent(data) });
+  }
+
+  function getItem(n: number, item: { assetId: string; name: string; location: { name: string } } | null): AssetData {
     // format n into - seperated string with leading zeros
     const assetID = fmtAssetID(item?.assetId ?? n + 1);
 
     return {
-      url: getQRCodeUrl(assetID),
+      url: getAssetQRCodeUrl(assetID),
       assetID: item?.assetId ?? assetID,
       name: item?.name ?? "_______________",
       location: item?.location?.name ?? "_______________",
     };
   }
 
-  const { data: allFields } = await useAsyncData(async () => {
+  function getLocationItem(n: number, location: { id: string; name: string } | null): LocationData {
+    const locationID = fmtLocationID(location?.id)
+    
+    return {
+      url: getLocationQRCodeUrl(locationID),
+      locationID: locationID,
+      name: location?.name ?? "_______________",
+      location: location?.name ?? "_______________",
+    };
+  }
+
+  // Fetch all assets
+  const { data: allAssets } = await useAsyncData('items-data', async () => {
+    console.log('=== FETCHING ITEMS DATA ===');
     const { data, error } = await api.items.getAll({ orderBy: "assetId" });
 
     if (error) {
+      console.error('Error fetching items:', error);
       return {
         items: [],
       };
     }
 
+    console.log('Fetched items data:', data);
+    console.log('Items count:', data?.items?.length);
+    
+    if (data?.items) {
+      console.log('Initializing selectedAssets for', data.items.length, 'items');
+      data.items.forEach(item => {
+        selectedAssets[item.assetId] = false;
+        console.log('Initialized asset:', item.assetId, 'to false');
+      });
+      console.log('Final selectedAssets:', selectedAssets);
+    } else {
+      console.log('No items found in data:', data);
+    }
+    
+    console.log('Returning assets data:', data);
     return data;
   });
 
+  // Fetch all locations
+  const { data: allLocations } = await useAsyncData(async () => {
+    console.log('=== FETCHING LOCATIONS DATA ===');
+    const { data, error } = await api.locations.getAll();
+    
+    if (error) {
+      console.error('Error fetching locations:', error);
+      return [];
+    }
+
+    console.log('Fetched locations data:', data);
+    console.log('Items count:', data?.length);
+    
+    if (data) {
+      console.log('Initializing selectedLocation for', data.length, 'items');
+      data.forEach(item => {
+        selectedLocation[item.id] = false;
+        console.log('Initialized location:', item.id, 'to false');
+      });
+      console.log('Final selectedLocation:', selectedLocation);
+    } else {
+      console.log('No items found in data:', data);
+    }
+
+    console.log('Fetched locations data:', data);
+    return data;
+  });
+
+  // Modified items computed property to handle different selection modes
   const items = computed(() => {
-    if (displayProperties.assetRange > displayProperties.assetRangeMax) {
-      return [];
-    }
-
-    const diff = displayProperties.assetRangeMax - displayProperties.assetRange;
-
-    if (diff > 999) {
-      return [];
-    }
-
-    const items: LabelData[] = [];
-    for (let i = displayProperties.assetRange - 1; i < displayProperties.assetRangeMax - 1; i++) {
-      const item = allFields?.value?.items?.[i];
-      if (item?.location) {
-        items.push(getItem(i, item as { assetId: string; location: { name: string }; name: string }));
-      } else {
-        items.push(getItem(i, null));
+    console.log('Computing items - selectionMode:', selectionMode.value);
+    console.log('Computing items - selectedAssets:', selectedAssets);
+    console.log('Computing items - selectedLocation:', selectedLocation);
+    console.log('Computing items - allAssetFields:', allAssets?.value);
+    console.log('Computing items - allLocationFields:', allLocations?.value);
+    
+    if (selectionMode.value === 'range') {
+      // Original range-based logic
+      if (displayProperties.assetRange > displayProperties.assetRangeMax) {
+        return [];
       }
+
+      const diff = displayProperties.assetRangeMax - displayProperties.assetRange;
+
+      if (diff > 999) {
+        return [];
+      }
+
+      const items: AssetData[] = [];
+      for (let i = displayProperties.assetRange - 1; i < displayProperties.assetRangeMax - 1; i++) {
+        const item = allAssets?.value?.items?.[i];
+        if (item?.location) {
+          items.push(getItem(i, item as { assetId: string; location: { name: string }; name: string }));
+        } else {
+          items.push(getItem(i, null));
+        }
+      }
+      console.log('Range mode - generated items:', items);
+      return items;
     }
-    return items;
+    else if (selectionMode.value === 'assets') {
+      // Filter by selected assets
+      console.log('Assets mode - selectedAssets object:', selectedAssets);
+      console.log('Assets mode - Object.entries:', Object.entries(selectedAssets));
+      
+      const selectedAssetIds = Object.entries(selectedAssets)
+        .filter(([_, selected]) => selected)
+        .map(([id]) => id);
+        
+      console.log('Assets mode - selectedAssetIds:', selectedAssetIds);
+      
+      if (selectedAssetIds.length === 0) {
+        console.log('Assets mode - no assets selected, returning empty array');
+        return [];
+      }
+      
+      const allAssetItems = allAssets?.value?.items || [];
+      console.log('Assets mode - all available items:', allAssetItems);
+      console.log('Assets mode - sample item assetIds:', allAssetItems.slice(0, 3).map(item => item.assetId));
+      
+      const filteredAssetItems = allAssetItems
+        .filter(item => {
+          const isSelected = selectedAssetIds.includes(item.assetId);
+          console.log(`Assets mode - checking item ${item.assetId}: ${isSelected}`);
+          return isSelected;
+        })
+        .map((item, index) => getItem(index, item as { assetId: string; location: { name: string }; name: string }));
+      
+      console.log('Assets mode - filteredAssetItems:', filteredAssetItems);
+      return filteredAssetItems;
+    }
+    else if (selectionMode.value === 'location') {
+      // Filter by selected location
+      if (!selectedLocation.value) {
+        console.log('Location mode - no location selected');
+        return [];
+      }
+
+      const selectedLocationIds = Object.entries(selectedLocation)
+        .filter(([_, selected]) => selected)
+        .map(([id]) => id);
+        
+      console.log('Location mode - selectedLocationIds:', selectedLocationIds);
+      
+      if (selectedLocationIds.length === 0) {
+        console.log('Location mode - no location selected, returning empty array');
+        return [];
+      }
+      
+      const allLocationItems = allLocations?.value || [];
+      console.log('Location mode - selectedLocation:', selectedLocation.value);
+      console.log('Location mode - all available items:', allLocations);
+      console.log('Location mode - sample item locations:', allLocationItems);
+      
+      const filteredLocationItems = allLocationItems
+        .filter(item => {
+          const isSelected = item.id === selectedLocation.value;
+          console.log(`Location mode - location ${item.id}: ${isSelected}`);
+          return isSelected;
+        })
+        .map((item, index) => getLocationItem(index, item as { id: string; location: { name: string }; name: string }));
+      
+      console.log('Location mode - filteredItems:', filteredLocationItems);
+      return filteredLocationItems;
+    }
+    
+    console.log('No matching selection mode, returning empty array');
+    return [];
   });
 
   type Row = {
-    items: LabelData[];
+    items: AssetData[];
   };
 
   type Page = {
@@ -328,9 +595,35 @@
     pages.value = calc;
   }
 
+/*
   onMounted(() => {
+    console.log('Component mounted, initial data:');
+    console.log('- allFields:', allAssets?.value);
+    console.log('- locations:', allLocations?.value);
+    console.log('- selectionMode:', selectionMode.value);
     calcPages();
   });
+
+  // Watch for changes in selection mode and recalculate pages
+  watch([selectionMode, selectedAssets, selectedLocation], () => {
+    console.log('Watcher triggered - selectionMode:', selectionMode.value);
+    console.log('Watcher triggered - selectedAssets:', selectedAssets);
+    console.log('Watcher triggered - selectedLocation:', selectedLocation);
+    calcPages();
+  }, { deep: true });
+
+  // Watch for changes in items and recalculate pages
+  watch(items, (newItems) => {
+    console.log('Items changed, recalculating pages. New items count:', newItems.length);
+    console.log('Items changed, new items:', newItems);
+    calcPages();
+  });
+
+  // Watch selectedAssets specifically
+  watch(selectedAssets, (newValue, oldValue) => {
+    console.log('selectedAssets changed from:', oldValue, 'to:', newValue);
+  }, { deep: true });
+*/
 </script>
 
 <template>
@@ -358,6 +651,209 @@
     </div>
     <Separator class="mx-auto max-w-4xl" />
     <div class="container mx-auto max-w-4xl p-4">
+      <!-- Label Dimension Presets -->
+      <div class="mb-4">
+        <Label for="preset-select">{{ $t("reports.label_generator.select_preset") || "Select Label Preset" }}</Label>
+        <select 
+          id="preset-select" 
+          class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
+          @change="applyPreset(parseInt($event.target.value))"
+        >
+          <option value="-1">{{ $t("reports.label_generator.custom_dimensions") || "Custom Dimensions" }}</option>
+          <option v-for="(preset, index) in labelPresets" :key="index" :value="index">
+            {{ preset.name }}
+          </option>
+        </select>
+      </div>
+
+      <!-- Selection Mode -->
+      <div class="mb-4">
+        <h3 class="text-lg font-medium mb-2">{{ $t("reports.label_generator.selection_mode") || "Selection Mode" }}</h3>
+        <div class="flex flex-col gap-2">
+          <div class="flex items-center gap-2">
+            <input 
+              type="radio" 
+              id="range-mode" 
+              value="range" 
+              v-model="selectionMode" 
+              name="selection-mode"
+            />
+            <Label for="range-mode">{{ $t("reports.label_generator.range_mode") || "Asset ID Range" }}</Label>
+          </div>
+          <div class="flex items-center gap-2">
+            <input 
+              type="radio" 
+              id="assets-mode" 
+              value="assets" 
+              v-model="selectionMode" 
+              name="selection-mode"
+            />
+            <Label for="assets-mode">{{ $t("reports.label_generator.assets_mode") || "Select Specific Assets" }}</Label>
+          </div>
+          <div class="flex items-center gap-2">
+            <input 
+              type="radio" 
+              id="location-mode" 
+              value="location" 
+              v-model="selectionMode" 
+              name="selection-mode"
+            />
+            <Label for="location-mode">{{ $t("reports.label_generator.location_mode") || "Filter by Location" }}</Label>
+          </div>
+        </div>
+        
+        <!-- Range mode fields (original fields) -->
+        <div v-if="selectionMode === 'range'" class="mt-4">
+          <div class="grid grid-cols-2 gap-3">
+            <div class="flex w-full max-w-xs flex-col">
+              <Label for="input-assetRange">
+                {{ $t("reports.label_generator.asset_start") }}
+              </Label>
+              <Input
+                id="input-assetRange"
+                v-model="displayProperties.assetRange"
+                type="number"
+                step="1"
+                class="w-full max-w-xs"
+              />
+            </div>
+            <div class="flex w-full max-w-xs flex-col">
+              <Label for="input-assetRangeMax">
+                {{ $t("reports.label_generator.asset_end") }}
+              </Label>
+              <Input
+                id="input-assetRangeMax"
+                v-model="displayProperties.assetRangeMax"
+                type="number"
+                step="1"
+                class="w-full max-w-xs"
+              />
+            </div>
+          </div>
+        </div>
+        
+        <!-- Asset selection mode -->
+
+        <div v-if="selectionMode === 'assets'" class="mt-4">
+          <!--- Asset debug info -->
+          <!---
+          <div class="mb-4 p-2 bg-yellow-100 border border-yellow-300">
+            <h4 class="font-bold">Assets Debug Info:</h4>
+            <p>Selection Mode: {{ selectionMode }}</p>
+            <p>Is Assets Mode: {{ selectionMode === 'assets' }}</p>
+            <p>Raw allFields ref: {{ allFields }}</p>
+            <p>allFields.value: {{ allFields?.value }}</p>
+            <p>Full allFields object: {{ JSON.stringify(allFields?.value) }}</p>
+            <p>allFields exists: {{ !!allFields?.value }}</p>
+            <p>allFields.items exists: {{ !!allFields?.value?.items }}</p>
+            <p>allFields.items type: {{ typeof allFields?.value?.items }}</p>
+            <p>allFields.items length: {{ allFields?.value?.items?.length }}</p>
+            <p>Total items available: {{ allFields?.value?.items?.length || 0 }}</p>
+            <p>Selected assets: {{ JSON.stringify(selectedAssets) }}</p>
+            <p>Items structure: {{ JSON.stringify(allFields?.value?.items?.slice(0, 1)) }}</p>
+            <p style="color: red; font-weight: bold;">Template render time: {{ new Date().toISOString() }}</p>
+            <button @click="console.log('Button click - allFields:', allFields, 'allFields.value:', allFields?.value)" class="bg-blue-500 text-white px-2 py-1 rounded">
+              Log allFields to Console
+            </button>
+          </div>
+          -->
+  
+          <div class="border p-2 max-h-60 overflow-y-auto bg-red-50">
+            <h5 class="font-bold text-red-600">Asset Checkboxes Section:</h5>
+
+            <div v-for="(item, index) in allAssets?.items" :key="item.assetId" class="flex items-center gap-2 mb-2 p-2 border bg-white">
+              <!--
+              <div class="text-xs bg-blue-100 p-1 rounded">
+                Index: {{ index }}<br>
+                Item: {{ item.assetId }}
+              </div>
+              -->
+              <!-- Debug info for this specific item -->
+              <!--
+              <div class="text-xs text-gray-500 mr-2 bg-gray-100 p-1 rounded">
+                ID: {{ item.assetId }}<br>
+                Selected: {{ selectedAssets[item.assetId] }}<br>
+                Initialized: {{ selectedAssets.hasOwnProperty(item.assetId) }}
+              </div>
+              -->
+              <!-- Try regular HTML checkbox first -->
+              <input
+                type="checkbox"
+                :id="`asset-${item.assetId}`"
+                :checked="selectedAssets[item.assetId]"
+                @click="console.log('Checkbox CLICKED for', item.assetId)"
+                @change="console.log('Checkbox CHANGED for', item.assetId, 'event.target.checked:', $event.target.checked); selectedAssets[item.assetId] = $event.target.checked; console.log('Updated selectedAssets:', selectedAssets)"
+              />
+              <label :for="`asset-${item.assetId}`" class="cursor-pointer" @click="console.log('Label clicked for', item.assetId)">
+                {{ item.assetId }} - {{ item.name }} ({{ item.location?.name || 'No location' }})
+              </label>
+            </div>
+            
+            <div v-if="(!allAssets?.items || allAssets?.items?.length === 0) && (!allAssets?.value?.items || allAssets?.value?.items?.length === 0)" class="text-red-600 font-bold">
+              NO ITEMS TO RENDER - both allFields.items and allFields.value.items are empty or undefined
+            </div>
+          </div>
+        </div>
+        
+        <!-- Location selection mode -->
+        <div v-if="selectionMode === 'location'" class="mt-4">
+        <!--
+          <div class="mb-4 p-2 bg-blue-500 border border-blue-300">
+            <h4 class="font-bold">Location Debug Info:</h4>
+            <p>Available locations: {{ allLocations?.length || 0 }}</p>
+            <p>Locations data: {{ JSON.stringify(allLocations?.slice(0, 2)) }}</p>
+            <p>Selected location: {{ selectedLocation }}</p>
+            <p>Items with selected location: {{ allLocationFields?.items?.filter(item => item.id === selectedLocation).length || 0 }}</p>
+          </div>
+        -->
+          
+          <div class="flex w-full max-w-xs flex-col">
+            <h5 class="font-bold text-red-600">Location Checkboxes Section:</h5>
+
+            <Label for="location-select">{{ $t("reports.label_generator.select_location") || "Select Location" }}</Label>
+            <select
+              id="location-select"
+              v-model="selectedLocation"
+              @change="console.log('Location selected:', selectedLocation)"
+              class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
+            >
+              <option value="">{{ $t("reports.label_generator.select_location_placeholder") || "Select a location..." }}</option>
+              <option v-for="location in allLocations" :key="location.id" :value="location.id">
+                {{ location.name }} (ID: {{ location.id }})
+              </option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Customizable Label Fields -->
+      <div class="mb-4">
+        <h3 class="text-lg font-medium mb-2">{{ $t("reports.label_generator.label_fields") || "Label Fields" }}</h3>
+        <div class="grid grid-cols-2 gap-2">
+          <div class="flex items-center gap-2">
+            <Checkbox id="showAssetId" v-model="labelFields.assetId" />
+            <Label for="showAssetId">{{ $t("reports.label_generator.show_asset_id") || "Show Asset ID" }}</Label>
+          </div>
+          <div class="flex items-center gap-2">
+            <Checkbox id="showName" v-model="labelFields.name" />
+            <Label for="showName">{{ $t("reports.label_generator.show_name") || "Show Name" }}</Label>
+          </div>
+          <div class="flex items-center gap-2">
+            <Checkbox id="showLocation" v-model="labelFields.location" />
+            <Label for="showLocation">{{ $t("reports.label_generator.show_location") || "Show Location" }}</Label>
+          </div>
+          <div class="flex items-center gap-2">
+            <Checkbox id="showBranding" v-model="labelFields.branding" />
+            <Label for="showBranding">{{ $t("reports.label_generator.show_branding") || "Show HomeBox Branding" }}</Label>
+          </div>
+          <div class="flex items-center gap-2">
+            <Checkbox id="showQRCode" v-model="labelFields.qrCode" />
+            <Label for="showQRCode">{{ $t("reports.label_generator.show_qr_code") || "Show QR Code" }}</Label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Original dimension inputs -->
       <div class="mx-auto grid grid-cols-2 gap-3">
         <div v-for="(prop, i) in propertyInputs" :key="i" class="flex w-full max-w-xs flex-col">
           <Label :for="`input-${prop.ref}`">
@@ -427,7 +923,7 @@
             width: `${out.card.width}${out.measure}`,
           }"
         >
-          <div class="flex items-center">
+          <div v-if="labelFields.qrCode" class="flex items-center">
             <img
               :src="item.url"
               :style="{
@@ -438,10 +934,10 @@
             />
           </div>
           <div class="ml-2 flex flex-col justify-center">
-            <div class="font-bold">{{ item.assetID }}</div>
-            <div class="text-xs font-light italic">HomeBox</div>
-            <div class="overflow-hidden text-wrap text-xs">{{ item.name }}</div>
-            <div class="text-xs">{{ item.location }}</div>
+            <div v-if="labelFields.assetId" class="font-bold">{{ selectionMode === 'location' ? item.name : item.assetID }}</div>
+            <div v-if="labelFields.branding" class="text-xs font-light italic">HomeBox</div>
+            <div v-if="labelFields.name" class="overflow-hidden text-wrap text-xs">{{ item.name }}</div>
+            <div v-if="labelFields.location" class="text-xs">{{ item.location }}</div>
           </div>
         </div>
       </div>
