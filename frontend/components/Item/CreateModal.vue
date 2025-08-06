@@ -383,18 +383,18 @@
       );
 
       if (duplicateError) {
-        console.warn("Duplicate check failed:", duplicateError);
+        toast.warning(t("components.item.create_modal.toast.duplicate_check_failed", { error: duplicateError }));
       } else if (duplicateCheck?.duplicate) {
         loading.value = false;
-        const confirmed = confirm(`An item named "${duplicateCheck.name}" already exists. Do you want to create it anyway?`);
+        const confirmed = confirm(t("components.item.create_modal.item_name_duplicate_confirm", { name: duplicateCheck.name }));
         if (!confirmed) {
           return;
         }
         loading.value = true;
       }
     } catch (error) {
-      // If duplicate check fails, log warning
-      console.warn("Duplicate check error:", error);
+      // If duplicate check fails, show warning toast
+      toast.warning(t("components.item.create_modal.toast.duplicate_check_failed", { error }));
     }
 
     // Proceed with creation if no duplicate or check failed
