@@ -121,6 +121,7 @@ func (a *app) mountRoutes(r *chi.Mux, chain *errchain.ErrChain, repos *repo.AllR
 		r.Post("/items", chain.ToHandlerFunc(v1Ctrl.HandleItemsCreate(), userMW...))
 		r.Post("/items/import", chain.ToHandlerFunc(v1Ctrl.HandleItemsImport(), userMW...))
 		r.Get("/items/export", chain.ToHandlerFunc(v1Ctrl.HandleItemsExport(), userMW...))
+		r.Get("/items/check-duplicate", chain.ToHandlerFunc(v1Ctrl.HandleItemsCheckDuplicate(), userMW...))
 		r.Get("/items/fields", chain.ToHandlerFunc(v1Ctrl.HandleGetAllCustomFieldNames(), userMW...))
 		r.Get("/items/fields/values", chain.ToHandlerFunc(v1Ctrl.HandleGetAllCustomFieldValues(), userMW...))
 

@@ -353,3 +353,8 @@ func (svc *ItemService) ExportBillOfMaterialsCSV(ctx context.Context, gid uuid.U
 
 	return reporting.BillOfMaterialsCSV(items)
 }
+
+// CheckDuplicateName checks if an item with the same name exists in the group
+func (svc *ItemService) CheckDuplicateName(ctx Context, name string) (bool, error) {
+	return svc.repo.Items.CheckDuplicateName(ctx, ctx.GID, name)
+}

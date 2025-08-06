@@ -330,6 +330,40 @@ func (ctrl *V1Controller) HandleItemsImport() errchain.HandlerFunc {
 	}
 }
 
+// HandleItemsCheckDuplicate godoc
+//
+//	@Summary	Check for duplicate item name
+//	@Tags		Items
+//	@Produce	json
+//	@Param		name	query		string	true	"Item name to check"
+//	@Success	200		{object}	map[string]interface{}
+//	@Router		/v1/items/check-duplicate [GET]
+//	@Security	Bearer
+func (ctrl *V1Controller) HandleItemsCheckDuplicate() errchain.HandlerFunc {
+	type query struct {
+		Name string `schema:"name" validate:"required"`
+	}
+
+	type response struct {
+		Name      string `json:"name"`
+		Duplicate bool   `json:"duplicate"`
+	}
+
+	fn := func(r *http.Request, q query) (response, error) {
+		ctx := services.NewContext(r.Context())
+		duplicate, err := ctrl.svc.Items.CheckDuplicateName(ctx, q.Name)
+		if err != nil {
+			return response{}, err
+		}
+		return response{
+			Name:      q.Name,
+			Duplicate: duplicate,
+		}, nil
+	}
+
+	return adapters.Query(fn, http.StatusOK)
+}
+
 // HandleItemsExport godocs
 //
 //	@Summary	Export Items

@@ -880,6 +880,16 @@ func (e *ItemsRepository) GetAllCustomFieldNames(ctx context.Context, gid uuid.U
 	return fieldNames, nil
 }
 
+// CheckDuplicateName checks if an item with the same name exists in the group
+func (e *ItemsRepository) CheckDuplicateName(ctx context.Context, gid uuid.UUID, name string) (bool, error) {
+	return e.db.Item.Query().
+		Where(
+			item.HasGroupWith(group.ID(gid)),
+			item.NameEqualFold(name), // Case-insensitive comparison
+		).
+		Exist(ctx)
+}
+
 // ZeroOutTimeFields is a helper function that can be invoked via the UI by a group member which will
 // set all date fields to the beginning of the day.
 //

@@ -376,6 +376,32 @@
 
     if (shift.value) close = false;
 
+    // Check for duplicates before creating
+    try {
+      const { data: duplicateCheck, error: duplicateError } = await api.items.checkDuplicate(
+        form.name.trim()
+      );
+
+      if (duplicateError) {
+        console.warn("Duplicate check failed:", duplicateError);
+      } else if (duplicateCheck?.duplicate) {
+        loading.value = false;
+        const confirmed = confirm(`An item named "${duplicateCheck.name}" already exists. Do you want to create it anyway?`);
+        if (!confirmed) {
+          return;
+        }
+        loading.value = true;
+      }
+    } catch (error) {
+      // If duplicate check fails, log warning
+      console.warn("Duplicate check error:", error);
+    }
+
+    // Proceed with creation if no duplicate or check failed
+    await performCreate(close);
+  }
+
+  async function performCreate(close: boolean) {
     const out: ItemCreate = {
       parentId: form.parentId,
       name: form.name,

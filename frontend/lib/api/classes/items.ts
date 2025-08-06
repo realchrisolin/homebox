@@ -110,6 +110,12 @@ export class ItemsApi extends BaseAPI {
     return this.http.post<ItemCreate, ItemOut>({ url: route("/items"), body: item });
   }
 
+  checkDuplicate(name: string) {
+    return this.http.get<{name: string, duplicate: boolean}>({
+      url: route("/items/check-duplicate", { name })
+    });
+  }
+
   async get(id: string) {
     const payload = await this.http.get<ItemOut>({ url: route(`/items/${id}`) });
 

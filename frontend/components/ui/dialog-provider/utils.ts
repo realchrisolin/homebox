@@ -7,6 +7,7 @@ export enum DialogID {
   AttachmentEdit = 'attachment-edit',
   ChangePassword = 'changePassword',
   CreateItem = 'create-item',
+  CreateItemDuplicateConfirm = 'create-item-duplicate-confirm',
   CreateLocation = 'create-location',
   CreateLabel = 'create-label',
   CreateNotifier = 'create-notifier',
