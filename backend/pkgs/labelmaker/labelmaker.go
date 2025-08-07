@@ -175,34 +175,46 @@ func GenerateLabel(w io.Writer, params *GenerateParameters, cfg *config.Config) 
 		log.Printf("Warning: Current fonts may not fully support all characters in the text: %s", allText)
 	}
 
-	regularFace := fontManager.GetRegularFace(params.DescriptionFontSize, params.Dpi)
-	boldFace := fontManager.GetBoldFace(params.TitleFontSize, params.Dpi)
-	defer regularFace.Close()
-	defer boldFace.Close()
+	// Use text-aware font selection for proper CJK/Latin font handling
+	titleFace := fontManager.GetBoldFaceForText(params.TitleText, params.TitleFontSize, params.Dpi)
+	descriptionFace := fontManager.GetRegularFaceForText(bodyText, params.DescriptionFontSize, params.Dpi)
+	defer titleFace.Close()
+	defer descriptionFace.Close()
 
-	regularFont := fontManager.GetRegularFont()
-	boldFont := fontManager.GetBoldFont()
+	// Get appropriate fonts for context creation based on text content
+	var titleFont, descriptionFont *truetype.Font
+	if fontManager.ContainsCJKCharacters(params.TitleText) {
+		titleFont = fontManager.cjkBoldFont
+	} else {
+		titleFont = fontManager.GetBoldFont()
+	}
+
+	if fontManager.ContainsCJKCharacters(bodyText) {
+		descriptionFont = fontManager.cjkRegularFont
+	} else {
+		descriptionFont = fontManager.GetRegularFont()
+	}
 
 	// Calculate text area dimensions
 	maxWidth := params.Width - (params.Margin * 2) - params.ComponentPadding
 
 	// Create temporary contexts for text measurement
 	tmpImg := image.NewRGBA(image.Rect(0, 0, 1, 1))
-	boldContext := createContext(boldFont, params.TitleFontSize, tmpImg, params.Dpi)
-	regularContext := createContext(regularFont, params.DescriptionFontSize, tmpImg, params.Dpi)
+	boldContext := createContext(titleFont, params.TitleFontSize, tmpImg, params.Dpi)
+	regularContext := createContext(descriptionFont, params.DescriptionFontSize, tmpImg, params.Dpi)
 
 	// Calculate total height needed
 	totalHeight := params.Margin
 	titleLineSpacing := boldContext.PointToFixed(params.TitleFontSize).Round()
 
-	titleLines, _ := wrapText(params.TitleText, boldFace, maxWidth-params.QrSize, -1, titleLineSpacing, boldContext)
+	titleLines, _ := wrapText(params.TitleText, titleFace, maxWidth-params.QrSize, -1, titleLineSpacing, boldContext)
 	titleHeight := titleLineSpacing * len(titleLines)
 	totalHeight += titleHeight
 
 	totalHeight += params.ComponentPadding / 4
 
 	regularLineSpacing := regularContext.PointToFixed(params.DescriptionFontSize).Round()
-	descriptionLinesRight, descriptionRemaining := wrapText(bodyText, regularFace, maxWidth-params.QrSize, params.QrSize-titleHeight, regularLineSpacing, regularContext)
+	descriptionLinesRight, descriptionRemaining := wrapText(bodyText, descriptionFace, maxWidth-params.QrSize, params.QrSize-titleHeight, regularLineSpacing, regularContext)
 	totalHeight += regularLineSpacing * len(descriptionLinesRight)
 
 	var textYBottomText int
@@ -211,7 +223,7 @@ func GenerateLabel(w io.Writer, params *GenerateParameters, cfg *config.Config) 
 	if hasBottomText {
 		totalHeight = max(params.Margin+params.QrSize+params.ComponentPadding/2, totalHeight)
 		textYBottomText = totalHeight
-		descriptionLinesBottom, _ = wrapText(descriptionRemaining, regularFace, maxWidth, -1, regularLineSpacing, regularContext)
+		descriptionLinesBottom, _ = wrapText(descriptionRemaining, descriptionFace, maxWidth, -1, regularLineSpacing, regularContext)
 		totalHeight += regularLineSpacing * len(descriptionLinesBottom)
 		totalHeight += params.Margin
 	}
@@ -235,9 +247,9 @@ func GenerateLabel(w io.Writer, params *GenerateParameters, cfg *config.Config) 
 		image.Point{},
 		draw.Over)
 
-	// Create final drawing contexts
-	boldContext = createContext(boldFont, params.TitleFontSize, img, params.Dpi)
-	regularContext = createContext(regularFont, params.DescriptionFontSize, img, params.Dpi)
+	// Create final drawing contexts with appropriate fonts
+	boldContext = createContext(titleFont, params.TitleFontSize, img, params.Dpi)
+	regularContext = createContext(descriptionFont, params.DescriptionFontSize, img, params.Dpi)
 
 	textXRight := params.Margin + params.ComponentPadding + params.QrSize
 	textY := params.Margin - 8

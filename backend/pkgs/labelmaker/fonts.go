@@ -16,40 +16,46 @@ var fontFiles embed.FS
 
 // FontManager handles font loading and selection for different languages
 type FontManager struct {
-	regularFont *truetype.Font
-	boldFont    *truetype.Font
+	latinRegularFont *truetype.Font // Go default font for Latin characters
+	latinBoldFont    *truetype.Font // Go default font for Latin characters
+	cjkRegularFont   *truetype.Font // Noto Sans CJK for CJK characters
+	cjkBoldFont      *truetype.Font // Noto Sans CJK for CJK characters
 }
 
 // NewFontManager creates a new font manager with multi-language support
 func NewFontManager() (*FontManager, error) {
 	fm := &FontManager{}
 
-	// Try to load Noto Sans CJK (supports Chinese, Japanese, Korean)
-	if regularFont, err := loadEmbeddedFont("fonts/NotoSansCJK-Regular.ttf"); err == nil {
-		fm.regularFont = regularFont
-		log.Println("Loaded Noto Sans CJK Regular font for multi-language support")
+	// Load Go's default fonts for Latin characters (to avoid number 4 artifact)
+	if latinRegularFont, err := truetype.Parse(gomedium.TTF); err != nil {
+		return nil, fmt.Errorf("failed to parse Go regular font: %w", err)
 	} else {
-		// Fallback to default Go fonts
-		log.Printf("Could not load Noto Sans CJK Regular font (%v), falling back to Go fonts", err)
-		if regularFont, err := truetype.Parse(gomedium.TTF); err != nil {
-			return nil, fmt.Errorf("failed to parse regular font: %w", err)
-		} else {
-			fm.regularFont = regularFont
-		}
+		fm.latinRegularFont = latinRegularFont
+		log.Println("Loaded Go default regular font for Latin characters")
 	}
 
-	// Try to load Noto Sans CJK Bold
-	if boldFont, err := loadEmbeddedFont("fonts/NotoSansCJK-Bold.ttf"); err == nil {
-		fm.boldFont = boldFont
-		log.Println("Loaded Noto Sans CJK Bold font for multi-language support")
+	if latinBoldFont, err := truetype.Parse(gobold.TTF); err != nil {
+		return nil, fmt.Errorf("failed to parse Go bold font: %w", err)
 	} else {
-		// Fallback to default Go fonts
-		log.Printf("Could not load Noto Sans CJK Bold font (%v), falling back to Go fonts", err)
-		if boldFont, err := truetype.Parse(gobold.TTF); err != nil {
-			return nil, fmt.Errorf("failed to parse bold font: %w", err)
-		} else {
-			fm.boldFont = boldFont
-		}
+		fm.latinBoldFont = latinBoldFont
+		log.Println("Loaded Go default bold font for Latin characters")
+	}
+
+	// Load Noto Sans CJK fonts for CJK characters
+	if cjkRegularFont, err := loadEmbeddedFont("fonts/NotoSansCJK-Regular.ttf"); err == nil {
+		fm.cjkRegularFont = cjkRegularFont
+		log.Println("Loaded Noto Sans CJK Regular font for CJK characters")
+	} else {
+		log.Printf("Could not load Noto Sans CJK Regular font (%v), CJK characters may not render properly", err)
+		fm.cjkRegularFont = fm.latinRegularFont // Fallback to Go font
+	}
+
+	if cjkBoldFont, err := loadEmbeddedFont("fonts/NotoSansCJK-Bold.ttf"); err == nil {
+		fm.cjkBoldFont = cjkBoldFont
+		log.Println("Loaded Noto Sans CJK Bold font for CJK characters")
+	} else {
+		log.Printf("Could not load Noto Sans CJK Bold font (%v), CJK characters may not render properly", err)
+		fm.cjkBoldFont = fm.latinBoldFont // Fallback to Go font
 	}
 
 	return fm, nil
@@ -64,30 +70,79 @@ func loadEmbeddedFont(path string) (*truetype.Font, error) {
 	return truetype.Parse(fontData)
 }
 
-// GetRegularFace returns a regular font face
+// GetRegularFace returns a regular font face (defaults to Latin font)
 func (fm *FontManager) GetRegularFace(size, dpi float64) font.Face {
-	return truetype.NewFace(fm.regularFont, &truetype.Options{
-		Size: size,
-		DPI:  dpi,
+	return truetype.NewFace(fm.latinRegularFont, &truetype.Options{
+		Size:    size,
+		DPI:     dpi,
+		Hinting: font.HintingNone,
 	})
 }
 
-// GetBoldFace returns a bold font face
+// GetBoldFace returns a bold font face (defaults to Latin font)
 func (fm *FontManager) GetBoldFace(size, dpi float64) font.Face {
-	return truetype.NewFace(fm.boldFont, &truetype.Options{
-		Size: size,
-		DPI:  dpi,
+	return truetype.NewFace(fm.latinBoldFont, &truetype.Options{
+		Size:    size,
+		DPI:     dpi,
+		Hinting: font.HintingNone,
 	})
 }
 
-// GetRegularFont returns the regular font
-func (fm *FontManager) GetRegularFont() *truetype.Font {
-	return fm.regularFont
+// GetRegularFaceForText returns appropriate font face based on text content
+func (fm *FontManager) GetRegularFaceForText(text string, size, dpi float64) font.Face {
+	if fm.ContainsCJKCharacters(text) {
+		return truetype.NewFace(fm.cjkRegularFont, &truetype.Options{
+			Size:    size,
+			DPI:     dpi,
+			Hinting: font.HintingNone,
+		})
+	}
+	return fm.GetRegularFace(size, dpi)
 }
 
-// GetBoldFont returns the bold font
+// GetBoldFaceForText returns appropriate font face based on text content
+func (fm *FontManager) GetBoldFaceForText(text string, size, dpi float64) font.Face {
+	if fm.ContainsCJKCharacters(text) {
+		return truetype.NewFace(fm.cjkBoldFont, &truetype.Options{
+			Size:    size,
+			DPI:     dpi,
+			Hinting: font.HintingNone,
+		})
+	}
+	return fm.GetBoldFace(size, dpi)
+}
+
+// ContainsCJKCharacters checks if text contains Chinese, Japanese, or Korean characters
+func (fm *FontManager) ContainsCJKCharacters(text string) bool {
+	for _, r := range text {
+		// Chinese characters (CJK Unified Ideographs)
+		if r >= 0x4E00 && r <= 0x9FFF {
+			return true
+		}
+		// Japanese Hiragana
+		if r >= 0x3040 && r <= 0x309F {
+			return true
+		}
+		// Japanese Katakana
+		if r >= 0x30A0 && r <= 0x30FF {
+			return true
+		}
+		// Korean Hangul
+		if r >= 0xAC00 && r <= 0xD7AF {
+			return true
+		}
+	}
+	return false
+}
+
+// GetRegularFont returns the Latin regular font
+func (fm *FontManager) GetRegularFont() *truetype.Font {
+	return fm.latinRegularFont
+}
+
+// GetBoldFont returns the Latin bold font
 func (fm *FontManager) GetBoldFont() *truetype.Font {
-	return fm.boldFont
+	return fm.latinBoldFont
 }
 
 // SupportsText checks if the current fonts support the given text
