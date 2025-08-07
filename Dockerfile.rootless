@@ -49,6 +49,10 @@ WORKDIR /go/src/app
 COPY --from=builder-dependencies /go/pkg/mod /go/pkg/mod
 COPY ./backend .
 
+# Copy fonts from frontend build stage to backend for embedding
+COPY --from=frontend-builder /app/public/fonts ./pkgs/labelmaker/fonts
+
+
 # Clear old public files and copy new ones from frontend build
 RUN rm -rf ./app/api/public
 COPY --from=frontend-builder /app/.output/public ./app/api/static/public

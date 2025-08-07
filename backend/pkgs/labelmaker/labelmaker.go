@@ -23,8 +23,6 @@ import (
 	"github.com/skip2/go-qrcode"
 	"github.com/sysadminsmedia/homebox/backend/internal/sys/config"
 	"golang.org/x/image/font"
-	"golang.org/x/image/font/gofont/gobold"
-	"golang.org/x/image/font/gofont/gomedium"
 )
 
 type GenerateParameters struct {
@@ -165,24 +163,25 @@ func GenerateLabel(w io.Writer, params *GenerateParameters, cfg *config.Config) 
 	qr.DisableBorder = true
 	qrImage := qr.Image(params.QrSize)
 
-	regularFont, err := truetype.Parse(gomedium.TTF)
+	// Initialize font manager with multi-language support
+	fontManager, err := NewFontManager()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to initialize font manager: %w", err)
 	}
 
-	boldFont, err := truetype.Parse(gobold.TTF)
-	if err != nil {
-		return err
+	// Check if fonts support the text content
+	allText := params.TitleText + " " + bodyText
+	if !fontManager.SupportsText(allText) {
+		log.Printf("Warning: Current fonts may not fully support all characters in the text: %s", allText)
 	}
 
-	regularFace := truetype.NewFace(regularFont, &truetype.Options{
-		Size: params.DescriptionFontSize,
-		DPI:  params.Dpi,
-	})
-	boldFace := truetype.NewFace(boldFont, &truetype.Options{
-		Size: params.TitleFontSize,
-		DPI:  params.Dpi,
-	})
+	regularFace := fontManager.GetRegularFace(params.DescriptionFontSize, params.Dpi)
+	boldFace := fontManager.GetBoldFace(params.TitleFontSize, params.Dpi)
+	defer regularFace.Close()
+	defer boldFace.Close()
+
+	regularFont := fontManager.GetRegularFont()
+	boldFont := fontManager.GetBoldFont()
 
 	// Calculate text area dimensions
 	maxWidth := params.Width - (params.Margin * 2) - params.ComponentPadding

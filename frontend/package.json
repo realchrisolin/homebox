@@ -1,8 +1,8 @@
 {
   "private": true,
   "scripts": {
-    "build": "nuxt generate",
-    "dev": "nuxt dev",
+    "build": "node scripts/downloadAndSanitizeFontFiles.js && nuxt generate",
+    "dev": "node scripts/downloadAndSanitizeFontFiles.js && nuxt dev",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
     "lint": "eslint --ext \".ts,.js,.vue\" --ignore-path ../.gitignore --ignore-pattern \"components/ui\" .",

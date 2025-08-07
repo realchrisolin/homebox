@@ -10,6 +10,7 @@
   import { Checkbox } from "@/components/ui/checkbox";
   import jsPDF from "jspdf";
   import QRCode from "qrcode";
+  import PDFFontManager from "~/utils/pdfFonts";
 
   const { t } = useI18n();
 
@@ -632,12 +633,31 @@
       format: [displayProperties.pageWidth, displayProperties.pageHeight]
     });
 
-    // Generate QR codes as data URLs for all items
+    // Setup multi-language fonts
+    console.log('Loading multi-language fonts for PDF generation...');
+    const fontManager = new PDFFontManager();
+ 
+    // Check what types of text we're dealing with
     const allItems = pages.value.flatMap(page => page.rows.flatMap(row => row.items));
+    const textSamples = allItems.map(item => `${item.name} ${item.location || ''}`).join(' ');
+    const detectedScript = PDFFontManager.detectLanguage(textSamples);
+    console.log(`Detected text script: ${detectedScript}`);
+
+    // Pre-load the font for the detected language
+    let availableFontName = null;
+    if (detectedScript !== 'en') {
+      availableFontName = await fontManager.addFontToPDF(doc, detectedScript);
+      if (availableFontName) {
+        console.log(`Loaded font for ${detectedScript}: ${availableFontName}`);
+      }
+    }
+
+    // Generate QR codes as data URLs for all items
+    const allItemsForQR = pages.value.flatMap(page => page.rows.flatMap(row => row.items));
     
     // Extract actual URLs from the API endpoints for QR code content
     const qrCodeDataUrls = await Promise.all(
-      allItems.map(item => {
+      allItemsForQR.map(item => {
         // Extract the actual URL from the API endpoint
         // item.url is like "/api/v1/qrcode?data=http%3A//localhost%3A3100/a/001-001"
         const urlParams = new URLSearchParams(item.url.split('?')[1]);
@@ -725,9 +745,16 @@
 
           // Add Asset ID (matches font-bold, default size ~16px -> 12pt in PDF)
           if (labelFields.assetId) {
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(12);
             const assetText = selectionMode.value === 'location' ? item.name : item.assetID;
+            const textLanguage = PDFFontManager.detectLanguage(assetText);
+
+            if (textLanguage !== 'en' && availableFontName) {
+              doc.setFont(availableFontName, 'normal');
+            } else {
+              doc.setFont('helvetica', 'bold');
+            }
+
+            doc.setFontSize(12);
             doc.text(assetText, textX, textY, { maxWidth: maxTextWidth });
             textY += lineHeight;
           }
@@ -744,7 +771,14 @@
 
           // Add item name (matches text-xs ~12px -> 9pt in PDF)
           if (labelFields.name) {
-            doc.setFont('helvetica', 'normal');
+            const textLanguage = PDFFontManager.detectLanguage(item.name);
+
+            if (textLanguage !== 'en' && availableFontName) {
+              doc.setFont(availableFontName, 'normal');
+            } else {
+              doc.setFont('helvetica', 'normal');
+            }
+
             doc.setFontSize(9);
             doc.text(nameLines, textX, textY);
             textY += nameLines.length * lineHeight * 0.8;
@@ -752,7 +786,14 @@
 
           // Add location (matches text-xs ~12px -> 9pt in PDF)
           if (labelFields.location) {
-            doc.setFont('helvetica', 'normal');
+            const textLanguage = PDFFontManager.detectLanguage(item.location);
+
+            if (textLanguage !== 'en' && availableFontName) {
+              doc.setFont(availableFontName, 'normal');
+            } else {
+              doc.setFont('helvetica', 'normal');
+            }
+
             doc.setFontSize(9);
             doc.text(locationLines, textX, textY);
           }
